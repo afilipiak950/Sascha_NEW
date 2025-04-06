@@ -25,4 +25,26 @@ yarn-error.log*
 .idea/
 .vscode/
 *.swp
-*.swo 
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+Lib/
+Scripts/
+etc/
+share/
+*.pyc
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Python
+.env.python
+.env.python.local
+.env.python.development.local
+.env.python.test.local
+.env.python.production.local 
