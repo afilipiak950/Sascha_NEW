@@ -17,7 +17,12 @@ class Settings(BaseSettings):
     REACT_APP_OPENAI_API_URL: str = "https://api.openai.com/v1"
     
     # CORS
-    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
+    BACKEND_CORS_ORIGINS: List[str] = [
+        "http://localhost:8501",
+        "http://localhost:3000",
+        "http://127.0.0.1:8501",
+        "http://127.0.0.1:3000",
+    ]
 
     @validator("BACKEND_CORS_ORIGINS", pre=True)
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
