@@ -3,6 +3,7 @@ import openai
 from datetime import datetime
 import json
 import logging
+import asyncio
 
 from app.core.config import settings
 from app.models.post import Post
@@ -12,6 +13,99 @@ logger = logging.getLogger(__name__)
 class AIService:
     def __init__(self):
         openai.api_key = settings.OPENAI_API_KEY
+        self.model = "gpt-4"  # Oder ein anderes verfügbares Modell
+        self.max_retries = 3
+        self.temperature = 0.7
+
+    async def generate_text(self, prompt: str, max_tokens: Optional[int] = None) -> str:
+        """Generiert Text mit GPT basierend auf einem Prompt"""
+        try:
+            for attempt in range(self.max_retries):
+                try:
+                    response = await openai.ChatCompletion.acreate(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": "Du bist ein professioneller LinkedIn-Content-Ersteller."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=self.temperature,
+                        max_tokens=max_tokens if max_tokens else 500,
+                        n=1,
+                        stop=None
+                    )
+                    
+                    return response.choices[0].message.content.strip()
+                    
+                except openai.error.RateLimitError:
+                    if attempt < self.max_retries - 1:
+                        logger.warning(f"Rate limit erreicht, Versuch {attempt + 1} von {self.max_retries}")
+                        await asyncio.sleep(2 ** attempt)  # Exponentielles Backoff
+                        continue
+                    raise
+                    
+        except Exception as e:
+            logger.error(f"Fehler bei der Text-Generierung: {str(e)}")
+            return "Fehler bei der Text-Generierung. Bitte versuchen Sie es später erneut."
+
+    async def analyze_sentiment(self, text: str) -> dict:
+        """Analysiert die Stimmung eines Textes"""
+        try:
+            prompt = f"""
+            Analysiere die Stimmung des folgenden Textes und gib eine JSON-Antwort zurück:
+            
+            Text: {text}
+            
+            Format:
+            {{"sentiment": "positiv|neutral|negativ", "confidence": 0.0-1.0}}
+            """
+            
+            response = await self.generate_text(prompt)
+            return eval(response)  # Konvertiert den String in ein Dictionary
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der Stimmungsanalyse: {str(e)}")
+            return {"sentiment": "neutral", "confidence": 0.0}
+
+    async def generate_hashtags(self, text: str, count: int = 5) -> list:
+        """Generiert relevante Hashtags für einen Text"""
+        try:
+            prompt = f"""
+            Generiere {count} relevante LinkedIn-Hashtags für den folgenden Text.
+            Die Hashtags sollten professionell und branchenrelevant sein.
+            
+            Text: {text}
+            
+            Antworte nur mit einer Liste von Hashtags im Format: ["hashtag1", "hashtag2", ...]
+            """
+            
+            response = await self.generate_text(prompt)
+            return eval(response)  # Konvertiert den String in eine Liste
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der Hashtag-Generierung: {str(e)}")
+            return []
+
+    async def improve_text(self, text: str, target: str = "engagement") -> str:
+        """Verbessert einen Text für mehr Engagement"""
+        try:
+            prompt = f"""
+            Verbessere den folgenden Text für mehr {target} auf LinkedIn.
+            Der Text sollte professionell und authentisch bleiben.
+            
+            Original: {text}
+            
+            Verbesserungen sollten:
+            - Die Kernbotschaft beibehalten
+            - Die Lesbarkeit verbessern
+            - Call-to-Actions hinzufügen
+            - Mehr Engagement generieren
+            """
+            
+            return await self.generate_text(prompt)
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der Text-Verbesserung: {str(e)}")
+            return text  # Gib den Original-Text zurück, wenn ein Fehler auftritt
 
     async def generate_post_content(
         self,
@@ -109,7 +203,7 @@ class AIService:
             raise
 
     async def analyze_post_engagement(self, post: Post) -> dict:
-        """Analysiert die Engagement-Metriken eines Posts und gibt Verbesserungsvorschläge."""
+        """Analysiert die Engagement-Metriken eines Posts und gib Verbesserungsvorschläge."""
         try:
             metrics = json.loads(post.engagement_metrics) if post.engagement_metrics else {}
             

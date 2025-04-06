@@ -11,6 +11,7 @@ from app.models.post import Post, PostStatus
 from app.models.interaction import Interaction, InteractionType
 from app.models.target_contact import TargetContact, ContactStatus
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class LinkedInService:
@@ -19,143 +20,151 @@ class LinkedInService:
         self.page: Optional[Page] = None
         self.is_logged_in = False
 
-    async def initialize(self):
-        """Initialisiert den Browser und meldet sich bei LinkedIn an."""
-        playwright = await async_playwright().start()
-        self.browser = await playwright.chromium.launch(headless=True)
-        self.page = await self.browser.new_page()
-        await self.login()
+    async def init(self):
+        """Initialisiert den Browser und die Seite"""
+        if not self.browser:
+            playwright = await async_playwright().start()
+            self.browser = await playwright.chromium.launch(
+                headless=settings.BROWSER_HEADLESS
+            )
+            self.page = await self.browser.new_page()
+            if settings.BROWSER_USER_AGENT:
+                await self.page.set_extra_http_headers({
+                    "User-Agent": settings.BROWSER_USER_AGENT
+                })
 
     async def login(self):
-        """Meldet sich bei LinkedIn an."""
+        """Führt den Login bei LinkedIn durch"""
         try:
-            await self.page.goto("https://www.linkedin.com/login")
-            await self.page.fill("#username", settings.LINKEDIN_EMAIL)
-            await self.page.fill("#password", settings.LINKEDIN_PASSWORD)
-            await self.page.click("button[type='submit']")
-            await self.page.wait_for_selector(".feed-identity-module", timeout=10000)
-            self.is_logged_in = True
-            logger.info("Erfolgreich bei LinkedIn angemeldet")
+            await self.init()
+            if not self.is_logged_in:
+                await self.page.goto("https://www.linkedin.com/login")
+                await self.page.fill('input[id="username"]', settings.LINKEDIN_EMAIL)
+                await self.page.fill('input[id="password"]', settings.LINKEDIN_PASSWORD)
+                await self.page.click('button[type="submit"]')
+                await self.page.wait_for_load_state("networkidle")
+                self.is_logged_in = True
+                logger.info("LinkedIn Login erfolgreich")
         except Exception as e:
             logger.error(f"Fehler beim LinkedIn-Login: {str(e)}")
             raise
 
-    async def create_draft_post(self, post: Post) -> bool:
-        """Erstellt einen LinkedIn-Post als Entwurf."""
+    async def create_draft_post(self, title: str, content: str, hashtags: List[str]) -> bool:
+        """Erstellt einen Draft-Post auf LinkedIn"""
         try:
-            await self.page.goto("https://www.linkedin.com/post/new/")
-            await self.page.wait_for_selector(".ql-editor")
-            
-            # Text eingeben
-            await self.page.fill(".ql-editor", post.content)
-            
-            # Hashtags hinzufügen
-            if post.hashtags:
-                hashtags = post.hashtags.split()
-                for hashtag in hashtags:
-                    await self.page.fill(".ql-editor", f" {hashtag}")
-            
-            # Als Entwurf speichern
-            await self.page.click("button[aria-label='Als Entwurf speichern']")
-            await self.page.wait_for_selector(".feed-shared-update-v2", timeout=5000)
-            
-            # Post-ID extrahieren
-            post_url = await self.page.url()
-            post.linkedin_post_id = post_url.split("/")[-1]
-            post.status = PostStatus.DRAFT
-            
+            await self.login()
+            # Gehe zur LinkedIn Startseite
+            await self.page.goto("https://www.linkedin.com/feed/")
+            # Klicke auf "Post erstellen"
+            await self.page.click('button[aria-label="Post erstellen"]')
+            # Warte auf den Editor
+            await self.page.wait_for_selector('div[aria-label="Editor für Textbeiträge"]')
+            # Füge den Content ein
+            full_content = f"{title}\n\n{content}\n\n{' '.join(hashtags)}"
+            await self.page.fill('div[aria-label="Editor für Textbeiträge"]', full_content)
+            # Klicke auf "Als Entwurf speichern"
+            await self.page.click('button:has-text("Als Entwurf speichern")')
+            await self.page.wait_for_load_state("networkidle")
             return True
         except Exception as e:
-            logger.error(f"Fehler beim Erstellen des Entwurfs: {str(e)}")
-            post.status = PostStatus.FAILED
+            logger.error(f"Fehler beim Erstellen des Draft-Posts: {str(e)}")
             return False
 
-    async def like_post(self, post_url: str) -> bool:
-        """Liked einen LinkedIn-Post."""
+    async def interact_with_post(self, post_url: str, action: str, comment_text: Optional[str] = None) -> bool:
+        """Interagiert mit einem Post (Like oder Kommentar)"""
         try:
+            await self.login()
             await self.page.goto(post_url)
-            await self.page.wait_for_selector("button[aria-label='Like']")
-            await self.page.click("button[aria-label='Like']")
-            return True
-        except Exception as e:
-            logger.error(f"Fehler beim Liken des Posts: {str(e)}")
-            return False
-
-    async def comment_on_post(self, post_url: str, comment: str) -> bool:
-        """Kommentiert einen LinkedIn-Post."""
-        try:
-            await this.page.goto(post_url)
-            await this.page.wait_for_selector(".comments-comment-texteditor")
-            await this.page.fill(".comments-comment-texteditor", comment)
-            await this.page.click("button[aria-label='Post']")
-            return True
-        except Exception as e:
-            logger.error(f"Fehler beim Kommentieren des Posts: {str(e)}")
-            return False
-
-    async def send_connection_request(self, profile_url: str) -> bool:
-        """Sendet eine Verbindungsanfrage an ein Profil."""
-        try:
-            await this.page.goto(profile_url)
-            await this.page.wait_for_selector("button[aria-label='Connect']")
-            await this.page.click("button[aria-label='Connect']")
+            await self.page.wait_for_load_state("networkidle")
             
-            # Zufällige Verzögerung zwischen 2-5 Sekunden
-            await asyncio.sleep(random.uniform(2, 5))
+            if action == "like":
+                like_button = await self.page.query_selector('button[aria-label="Gefällt mir"]')
+                if like_button:
+                    await like_button.click()
+            elif action == "comment" and comment_text:
+                # Öffne Kommentarbereich
+                await self.page.click('button[aria-label="Kommentar hinzufügen"]')
+                # Warte auf den Kommentar-Editor
+                await self.page.wait_for_selector('div[aria-label="Editor für Kommentare"]')
+                # Füge den Kommentar ein
+                await self.page.fill('div[aria-label="Editor für Kommentare"]', comment_text)
+                # Sende den Kommentar
+                await self.page.click('button[aria-label="Kommentar posten"]')
             
-            # "Send" Button klicken
-            await this.page.click("button[aria-label='Send now']")
+            await self.page.wait_for_load_state("networkidle")
             return True
         except Exception as e:
-            logger.error(f"Fehler beim Senden der Verbindungsanfrage: {str(e)}")
+            logger.error(f"Fehler bei der Post-Interaktion: {str(e)}")
             return False
 
-    async def follow_profile(self, profile_url: str) -> bool:
-        """Folgt einem LinkedIn-Profil."""
+    async def connect_with_profile(self, profile_url: str, message: Optional[str] = None) -> bool:
+        """Sendet eine Vernetzungsanfrage an ein Profil"""
         try:
-            await this.page.goto(profile_url)
-            await this.page.wait_for_selector("button[aria-label='Follow']")
-            await this.page.click("button[aria-label='Follow']")
-            return True
-        except Exception as e:
-            logger.error(f"Fehler beim Folgen des Profils: {str(e)}")
-            return False
-
-    async def search_target_contacts(self, keywords: List[str], industry: Optional[str] = None) -> List[Dict]:
-        """Sucht nach potenziellen Zielkontakten basierend auf Keywords."""
-        try:
-            search_url = "https://www.linkedin.com/search/results/people/?"
-            params = {
-                "keywords": " ".join(keywords),
-                "origin": "GLOBAL_SEARCH_HEADER"
-            }
-            if industry:
-                params["industry"] = industry
+            await self.login()
+            await self.page.goto(profile_url)
+            await self.page.wait_for_load_state("networkidle")
+            
+            # Finde den "Vernetzen" Button
+            connect_button = await self.page.query_selector('button:has-text("Vernetzen")')
+            if connect_button:
+                await connect_button.click()
                 
-            await this.page.goto(search_url + "&".join(f"{k}={v}" for k, v in params.items()))
-            await this.page.wait_for_selector(".search-results-container")
-            
-            # Extrahiere Profilinformationen
-            profiles = []
-            for profile in await this.page.query_selector_all(".entity-result__item"):
-                name = await profile.query_selector(".entity-result__title-text")
-                title = await profile.query_selector(".entity-result__primary-subtitle")
-                company = await profile.query_selector(".entity-result__secondary-subtitle")
+                if message:
+                    # Warte auf "Notiz hinzufügen" Button
+                    add_note_button = await self.page.wait_for_selector('button:has-text("Notiz hinzufügen")')
+                    await add_note_button.click()
+                    
+                    # Fülle die Nachricht aus
+                    await self.page.fill('textarea[name="message"]', message)
                 
-                profiles.append({
-                    "name": await name.inner_text() if name else "",
-                    "title": await title.inner_text() if title else "",
-                    "company": await company.inner_text() if company else "",
-                    "profile_url": await profile.get_attribute("href")
-                })
-            
-            return profiles
+                # Sende die Anfrage
+                await self.page.click('button:has-text("Senden")')
+                await self.page.wait_for_load_state("networkidle")
+                return True
+            return False
         except Exception as e:
-            logger.error(f"Fehler bei der Kontaktsuche: {str(e)}")
+            logger.error(f"Fehler beim Verbinden mit Profil: {str(e)}")
+            return False
+
+    async def search_posts_by_hashtag(self, hashtag: str, limit: int = 10) -> List[dict]:
+        """Sucht nach Posts mit einem bestimmten Hashtag"""
+        try:
+            await self.login()
+            await self.page.goto(f"https://www.linkedin.com/search/results/content/?keywords=%23{hashtag}")
+            await self.page.wait_for_load_state("networkidle")
+            
+            posts = []
+            post_elements = await self.page.query_selector_all("div.feed-shared-update-v2")
+            
+            for i, post in enumerate(post_elements):
+                if i >= limit:
+                    break
+                    
+                try:
+                    # Extrahiere Post-URL
+                    post_link = await post.query_selector("a.app-aware-link")
+                    post_url = await post_link.get_attribute("href") if post_link else None
+                    
+                    # Extrahiere Post-Text
+                    post_text = await post.query_selector("span.break-words")
+                    text = await post_text.inner_text() if post_text else ""
+                    
+                    if post_url:
+                        posts.append({
+                            "url": post_url,
+                            "text": text
+                        })
+                except Exception as e:
+                    logger.warning(f"Fehler beim Extrahieren eines Posts: {str(e)}")
+                    continue
+            
+            return posts
+        except Exception as e:
+            logger.error(f"Fehler bei der Hashtag-Suche: {str(e)}")
             return []
 
     async def close(self):
-        """Schließt den Browser und beendet die Session."""
+        """Schließt den Browser"""
         if self.browser:
             await self.browser.close()
             self.browser = None

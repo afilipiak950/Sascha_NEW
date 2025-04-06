@@ -3,6 +3,7 @@ from pydantic import AnyHttpUrl, EmailStr, validator, ConfigDict
 from pydantic_settings import BaseSettings
 import secrets
 from pathlib import Path
+import os
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "LinkedIn Growth Agent"
@@ -17,12 +18,7 @@ class Settings(BaseSettings):
     REACT_APP_OPENAI_API_URL: str = "https://api.openai.com/v1"
     
     # CORS
-    BACKEND_CORS_ORIGINS: List[str] = [
-        "http://localhost:8501",
-        "http://localhost:3000",
-        "http://127.0.0.1:8501",
-        "http://127.0.0.1:3000",
-    ]
+    BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:8501"]  # Streamlit Frontend
 
     @validator("BACKEND_CORS_ORIGINS", pre=True)
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
@@ -33,23 +29,36 @@ class Settings(BaseSettings):
         raise ValueError(v)
 
     # Datenbank
-    SQLALCHEMY_DATABASE_URI: str = "sqlite:///./linkedin_agent.db"
-    
+    POSTGRES_SERVER: str = os.getenv("POSTGRES_SERVER", "localhost")
+    POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
+    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "postgres")
+    POSTGRES_DB: str = os.getenv("POSTGRES_DB", "linkedin_agent")
+    DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL")
+
+    @validator("DATABASE_URL", pre=True)
+    def assemble_db_connection(cls, v: Optional[str], values: dict) -> str:
+        if isinstance(v, str):
+            return v
+        return f"postgresql+asyncpg://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}@{values.get('POSTGRES_SERVER')}/{values.get('POSTGRES_DB')}"
+
     # LinkedIn API
-    LINKEDIN_API_URL: str = "https://api.linkedin.com/v2"
-    LINKEDIN_CLIENT_ID: Optional[str] = None
-    LINKEDIN_CLIENT_SECRET: Optional[str] = None
+    LINKEDIN_EMAIL: str = os.getenv("LINKEDIN_EMAIL", "")
+    LINKEDIN_PASSWORD: str = os.getenv("LINKEDIN_PASSWORD", "")
     
     # OpenAI API
-    OPENAI_API_URL: str = "https://api.openai.com/v1"
-    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     
     # Scheduler
-    SCHEDULER_INTERVAL: int = 60  # Sekunden
+    POST_CREATION_DAYS: List[str] = ["mon", "wed", "fri"]
+    POST_CREATION_HOUR: int = 10
+    CONNECTION_HOUR: int = 9
+    FOLLOW_UP_HOUR: int = 14
+    INTERACTION_HOURS: List[int] = [11, 13, 15, 17]
+    HASHTAG_COMMENT_HOURS: List[int] = [10, 12, 14, 16]
     
     # Rate Limiting
     RATE_LIMIT_REQUESTS: int = 100
-    RATE_LIMIT_PERIOD: int = 3600  # Sekunden
+    RATE_LIMIT_PERIOD: int = 3600  # 1 Stunde
     
     # Proxy
     PROXY_ENABLED: bool = False
@@ -57,30 +66,25 @@ class Settings(BaseSettings):
     
     # Browser
     BROWSER_HEADLESS: bool = True
-    BROWSER_USER_AGENT: Optional[str] = None
+    BROWSER_USER_AGENT: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     
     # LinkedIn
-    LINKEDIN_EMAIL: str
-    LINKEDIN_PASSWORD: str
+    LINKEDIN_API_URL: str = "https://api.linkedin.com/v2"
+    LINKEDIN_CLIENT_ID: Optional[str] = None
+    LINKEDIN_CLIENT_SECRET: Optional[str] = None
     
-    # Database
-    POSTGRES_SERVER: str
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
-    POSTGRES_DB: str
-    DATABASE_URL: Optional[str] = None
-
-    @validator("DATABASE_URL", pre=True)
-    def assemble_db_connection(cls, v: Optional[str], values: dict[str, any]) -> any:
-        if isinstance(v, str):
-            return v
-        return f"postgresql://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}@{values.get('POSTGRES_SERVER')}/{values.get('POSTGRES_DB')}"
-
+    # OpenAI API
+    OPENAI_API_URL: str = "https://api.openai.com/v1"
+    
     # Scheduler
-    POST_GENERATION_FREQUENCY: int = 3  # Posts pro Woche
-    DAILY_CONNECTION_LIMIT: int = 39
-    INTERACTION_INTERVAL_HOURS: int = 4  # Stunden zwischen Interaktionen
-
+    SCHEDULER_INTERVAL: int = 60  # Sekunden
+    
+    # Agent-Einstellungen
+    POSTS_PER_WEEK: int = 3
+    CONNECTIONS_PER_DAY: int = 39
+    MAX_INTERACTIONS_PER_DAY: int = 50
+    TARGET_HASHTAGS: List[str] = ["marketing", "sales", "ai", "digitalmarketing", "business"]
+    
     model_config = ConfigDict(
         env_file=".env",
         case_sensitive=True,
