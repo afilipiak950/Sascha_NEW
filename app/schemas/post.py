@@ -1,5 +1,5 @@
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
 from app.models.post import PostStatus
@@ -29,11 +29,14 @@ class PostInDBBase(PostBase):
     updated_at: Optional[datetime] = None
     published_at: Optional[datetime] = None
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Additional properties to return via API
 class Post(PostInDBBase):
+    pass
+
+# Response model for API
+class PostResponse(Post):
     pass
 
 # Additional properties stored in DB

@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional, Union
-from pydantic import AnyHttpUrl, EmailStr, validator
+from pydantic import AnyHttpUrl, EmailStr, validator, ConfigDict
 from pydantic_settings import BaseSettings
 import secrets
 from pathlib import Path
@@ -9,6 +9,12 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str = secrets.token_urlsafe(32)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8  # 8 Tage
+    ALGORITHM: str = "HS256"
+    
+    # React App Settings
+    REACT_APP_API_URL: str = "http://localhost:8000/api"
+    REACT_APP_LINKEDIN_API_URL: str = "https://api.linkedin.com/v2"
+    REACT_APP_OPENAI_API_URL: str = "https://api.openai.com/v1"
     
     # CORS
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
@@ -70,8 +76,10 @@ class Settings(BaseSettings):
     DAILY_CONNECTION_LIMIT: int = 39
     INTERACTION_INTERVAL_HOURS: int = 4  # Stunden zwischen Interaktionen
 
-    class Config:
-        case_sensitive = True
-        env_file = ".env"
+    model_config = ConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="allow"
+    )
 
 settings = Settings() 
