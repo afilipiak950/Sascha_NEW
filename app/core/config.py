@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional, Union
-from pydantic import AnyHttpUrl, EmailStr, validator, ConfigDict
+from pydantic import AnyHttpUrl, EmailStr, validator, ConfigDict, computed_field
 from pydantic_settings import BaseSettings
 import secrets
 from pathlib import Path
@@ -40,6 +40,12 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return v
         return f"postgresql+asyncpg://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}@{values.get('POSTGRES_SERVER')}/{values.get('POSTGRES_DB')}"
+
+    @computed_field
+    @property
+    def SQLALCHEMY_DATABASE_URI(self) -> str:
+        """Alias für DATABASE_URL für SQLAlchemy Kompatibilität"""
+        return self.DATABASE_URL or "sqlite:///linkedin_agent.db"
 
     # LinkedIn API
     LINKEDIN_EMAIL: str = os.getenv("LINKEDIN_EMAIL", "")
