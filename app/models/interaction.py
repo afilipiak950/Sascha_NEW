@@ -1,7 +1,13 @@
 from datetime import datetime
+from enum import Enum
 from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey
 from sqlalchemy.orm import relationship
 from app.models.base import Base
+
+class InteractionType(str, Enum):
+    LIKE = "like"
+    COMMENT = "comment"
+    SHARE = "share"
 
 class Interaction(Base):
     __tablename__ = "interactions"
