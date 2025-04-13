@@ -1,15 +1,5 @@
 import streamlit as st
-import pandas as pd
-from datetime import datetime, timedelta
-import json
-import requests
 import asyncio
-from typing import Dict, List, Optional
-import os
-import time
-import plotly.express as px
-import plotly.graph_objects as go
-
 from app.core.config import settings
 from app.services.linkedin_service import LinkedInService
 from app.services.ai_service import AIService
@@ -17,7 +7,10 @@ from app.agents.interaction_agent import InteractionAgent
 from app.agents.post_draft_agent import PostDraftAgent
 from app.agents.connection_agent import ConnectionAgent
 from app.agents.hashtag_agent import HashtagAgent
-from app.models.interaction import InteractionType
+import plotly.express as px
+import pandas as pd
+from datetime import datetime, timedelta
+from app.core.exceptions import LinkedInError, LinkedInAuthError, LinkedInConnectionError, LinkedInRateLimitError
 
 # Konfiguration
 st.set_page_config(
@@ -27,349 +20,583 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS für moderneres Design
+# Custom CSS
 st.markdown("""
 <style>
-    /* Grundlegendes Layout */
+    /* Grundlegende Stile */
     .main {
         background-color: #f8f9fa;
-        padding: 1rem;
+        font-family: 'Inter', sans-serif;
+    }
+    
+    .stApp {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 2rem;
     }
     
     /* Header */
     .header {
-        background: linear-gradient(135deg, #0077B5 0%, #00A0DC 100%);
+        background: linear-gradient(135deg, #0077B5, #00A0DC);
+        padding: 2.5rem;
+        border-radius: 15px;
+        margin-bottom: 2.5rem;
         color: white;
-        padding: 2rem;
-        border-radius: 12px;
-        margin-bottom: 2rem;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     
-    /* Metriken */
+    .header h1 {
+        font-size: 2.5rem;
+        margin-bottom: 0.5rem;
+        font-weight: 700;
+    }
+    
+    .header p {
+        font-size: 1.1rem;
+        opacity: 0.9;
+    }
+    
+    /* Metrik-Karten */
     .metric-card {
         background: white;
-        padding: 1.5rem;
+        padding: 2rem;
         border-radius: 12px;
-        border: 1px solid #e5e7eb;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
         transition: all 0.3s ease;
-        cursor: pointer;
-        position: relative;
-        overflow: hidden;
+        border: 1px solid rgba(0,0,0,0.05);
     }
+    
     .metric-card:hover {
         transform: translateY(-5px);
         box-shadow: 0 8px 15px rgba(0,0,0,0.1);
     }
-    .metric-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 4px;
-        background: linear-gradient(90deg, #0077B5, #00A0DC);
+    
+    .metric-card h3 {
+        color: #6c757d;
+        font-size: 1rem;
+        margin-bottom: 0.5rem;
     }
     
-    /* Agent Status */
+    .metric-card h2 {
+        color: #0077B5;
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+    }
+    
+    .metric-card p {
+        color: #28a745;
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+    
+    /* Agent-Status */
     .agent-status {
         background: white;
         padding: 1.5rem;
         border-radius: 12px;
-        border: 1px solid #e5e7eb;
-        margin-bottom: 1rem;
+        margin-bottom: 1.5rem;
+        border-left: 4px solid #0077B5;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         transition: all 0.3s ease;
     }
+    
     .agent-status:hover {
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transform: translateX(5px);
     }
     
-    /* Progress Bar */
-    .progress-bar {
-        height: 4px;
-        background: #e5e7eb;
-        border-radius: 2px;
-        margin: 0.5rem 0;
-        overflow: hidden;
-    }
-    .progress-value {
-        height: 100%;
-        background: linear-gradient(90deg, #0077B5 0%, #00A0DC 100%);
-        border-radius: 2px;
-        transition: width 0.5s ease;
+    .agent-status h4 {
+        color: #0077B5;
+        font-size: 1.2rem;
+        margin-bottom: 1rem;
     }
     
-    /* Status Badges */
+    /* Status-Badges */
     .status-badge {
-        display: inline-flex;
-        align-items: center;
-        padding: 0.25rem 0.75rem;
-        border-radius: 9999px;
-        font-size: 0.875rem;
-        font-weight: 500;
-        transition: all 0.3s ease;
-    }
-    .status-badge:hover {
-        transform: scale(1.05);
-    }
-    .status-success {
-        background-color: #ecfdf5;
-        color: #059669;
-    }
-    .status-pending {
-        background-color: #fffbeb;
-        color: #d97706;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        display: inline-block;
+        margin-right: 0.5rem;
     }
     
-    /* Activity Feed */
-    .activity-feed {
-        background: white;
-        padding: 1rem;
-        border-radius: 12px;
-        border: 1px solid #e5e7eb;
+    .status-active {
+        background: #e6f3ff;
+        color: #0077B5;
     }
+    
+    .status-inactive {
+        background: #ffe6e6;
+        color: #dc3545;
+    }
+    
+    /* Aktivitäts-Feed */
     .activity-item {
-        padding: 1rem;
-        border-bottom: 1px solid #e5e7eb;
+        background: white;
+        padding: 1.5rem;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0077B5;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         transition: all 0.3s ease;
     }
+    
     .activity-item:hover {
-        background: #f8f9fa;
-    }
-    .activity-item:last-child {
-        border-bottom: none;
+        transform: translateX(5px);
     }
     
     /* Buttons */
     .stButton>button {
-        background: linear-gradient(90deg, #0077B5 0%, #00A0DC 100%);
+        background: linear-gradient(135deg, #0077B5, #00A0DC);
         color: white;
         border: none;
         padding: 0.75rem 1.5rem;
         border-radius: 8px;
-        font-weight: 500;
+        font-weight: 600;
         transition: all 0.3s ease;
-    }
-    .stButton>button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     
-    /* Inputs */
-    .stTextInput>div>div {
+    .stButton>button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,119,181,0.2);
+    }
+    
+    /* Input-Felder */
+    .stTextInput>div>div>input {
         border-radius: 8px;
-        border: 1px solid #e5e7eb;
+        border: 1px solid #dee2e6;
+        padding: 0.75rem;
         transition: all 0.3s ease;
     }
-    .stTextInput>div>div:focus-within {
+    
+    .stTextInput>div>div>input:focus {
         border-color: #0077B5;
         box-shadow: 0 0 0 3px rgba(0,119,181,0.1);
     }
     
     /* Tabs */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 1rem;
-        background: white;
-        padding: 1rem;
-        border-radius: 12px;
-        border: 1px solid #e5e7eb;
+        gap: 2rem;
+        border-bottom: 2px solid #dee2e6;
     }
+    
     .stTabs [data-baseweb="tab"] {
         padding: 1rem 2rem;
-        color: #1a1f36;
         border-radius: 8px;
+        font-weight: 600;
         transition: all 0.3s ease;
     }
+    
     .stTabs [aria-selected="true"] {
-        background: #f0f7ff;
-        border-bottom: 2px solid #0077B5;
+        background: linear-gradient(135deg, #0077B5, #00A0DC);
+        color: white;
+    }
+    
+    /* Sidebar */
+    .css-1d391kg {
+        background-color: white;
+        padding: 2rem;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    }
+    
+    /* Responsive Anpassungen */
+    @media (max-width: 768px) {
+        .stApp {
+            padding: 1rem;
+        }
+        
+        .header {
+            padding: 1.5rem;
+        }
+        
+        .header h1 {
+            font-size: 2rem;
+        }
+        
+        .metric-card {
+            padding: 1.5rem;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
 
+# Services initialisieren
+linkedin_service = LinkedInService()
+ai_service = AIService()
+interaction_agent = InteractionAgent(linkedin_service, ai_service)
+post_draft_agent = PostDraftAgent(linkedin_service, ai_service)
+connection_agent = ConnectionAgent(linkedin_service, ai_service)
+hashtag_agent = HashtagAgent(linkedin_service, ai_service)
+
 # Header
 st.markdown("""
 <div class="header">
-    <h1 style="margin: 0;">LinkedIn Agent Orchestrator</h1>
-    <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">Monitor and control your LinkedIn automation activities.</p>
+    <h1>LinkedIn Agent Orchestrator</h1>
+    <p>Automatisiere und optimiere deine LinkedIn-Aktivitäten</p>
 </div>
 """, unsafe_allow_html=True)
 
 # Sidebar
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png", width=50)
-    st.title("Agent Hub")
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/LinkedIn_logo_initials.png/800px-LinkedIn_logo_initials.png", width=100)
+    st.markdown("## Navigation")
+    
+    # Status-Anzeige
+    st.markdown("### Agent Status")
+    status_col1, status_col2 = st.columns(2)
+    
+    with status_col1:
+        st.markdown("""
+        <div class="agent-status">
+            <h4>Post Agent</h4>
+            <span class="status-badge status-active">Aktiv</span>
+            <div class="progress-bar">
+                <div class="progress" style="width: 75%"></div>
+            </div>
+            <p>Letzte Aktivität: 2024-04-06 10:15</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="agent-status">
+            <h4>Connection Agent</h4>
+            <span class="status-badge status-active">Aktiv</span>
+            <div class="progress-bar">
+                <div class="progress" style="width: 60%"></div>
+            </div>
+            <p>Letzte Aktivität: 2024-04-06 09:30</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with status_col2:
+        st.markdown("""
+        <div class="agent-status">
+            <h4>Engagement Agent</h4>
+            <span class="status-inactive">Inaktiv</span>
+            <div class="progress-bar">
+                <div class="progress" style="width: 0%"></div>
+            </div>
+            <p>Letzte Aktivität: 2024-04-05 15:45</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="agent-status">
+            <h4>Hashtag Monitor</h4>
+            <span class="status-badge status-active">Aktiv</span>
+            <div class="progress-bar">
+                <div class="progress" style="width: 90%"></div>
+            </div>
+            <p>Letzte Aktivität: 2024-04-06 11:20</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Navigation
-    selected_page = st.selectbox(
-        "Navigation",
-        ["Dashboard", "Post Agent", "Connection Agent", "Engagement Agent", "Hashtag Monitor", "Schedule"],
-        format_func=lambda x: f"{'📊' if x == 'Dashboard' else '📝' if x == 'Post Agent' else '🤝' if x == 'Connection Agent' else '📈' if x == 'Engagement Agent' else '🔍' if x == 'Hashtag Monitor' else '⏰'} {x}"
+    st.markdown("### Menü")
+    page = st.selectbox(
+        "Wähle eine Funktion",
+        ["Dashboard", "Post Erstellung", "Networking", "Interaktionen", "Einstellungen"],
+        key="nav_select"
     )
+    
+    if st.button("Abmelden"):
+        asyncio.run(linkedin_service.close())
+        st.session_state.is_authenticated = False
+        st.rerun()
 
 # Hauptbereich
-st.title("Dashboard")
-st.markdown("Monitor and control your LinkedIn automation activities.")
-
-# Metriken-Übersicht
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.markdown("""
-    <div class="metric-card">
-        <div style="font-size: 2rem; font-weight: 600; color: #1a1f36;">12</div>
-        <div style="color: #6b7280; font-size: 0.875rem;">Posts Created</div>
-        <div style="color: #059669; font-size: 0.875rem;">+3 this week</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col2:
-    st.markdown("""
-    <div class="metric-card">
-        <div style="font-size: 2rem; font-weight: 600; color: #1a1f36;">173</div>
-        <div style="color: #6b7280; font-size: 0.875rem;">New Connections</div>
-        <div style="color: #059669; font-size: 0.875rem;">+39 this week</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col3:
-    st.markdown("""
-    <div class="metric-card">
-        <div style="font-size: 2rem; font-weight: 600; color: #1a1f36;">254</div>
-        <div style="color: #6b7280; font-size: 0.875rem;">Engagement Actions</div>
-        <div style="color: #059669; font-size: 0.875rem;">+82 this week</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col4:
-    st.markdown("""
-    <div class="metric-card">
-        <div style="font-size: 2rem; font-weight: 600; color: #1a1f36;">87</div>
-        <div style="color: #6b7280; font-size: 0.875rem;">Hashtag Interactions</div>
-        <div style="color: #059669; font-size: 0.875rem;">+14 this week</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# Agent Status
-st.subheader("Agent Status")
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("""
-    <div class="agent-status">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <h4 style="margin: 0;">Post Agent</h4>
-                <p style="color: #6b7280; margin: 0.5rem 0;">Creates posts on your behalf</p>
-            </div>
-            <div class="status-badge status-success">Inactive</div>
-        </div>
-        <div class="progress-bar">
-            <div class="progress-value" style="width: 25%;"></div>
-        </div>
-        <div style="color: #6b7280; font-size: 0.875rem; margin-top: 0.5rem;">
-            1/4 tasks • Last activity: 2024-04-06 10:15 AM
-        </div>
-    </div>
-
-    <div class="agent-status">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <h4 style="margin: 0;">Connection Agent</h4>
-                <p style="color: #6b7280; margin: 0.5rem 0;">Finds and connects with relevant profiles</p>
-            </div>
-            <div class="status-badge status-success">Inactive</div>
-        </div>
-        <div class="progress-bar">
-            <div class="progress-value" style="width: 60%;"></div>
-        </div>
-        <div style="color: #6b7280; font-size: 0.875rem; margin-top: 0.5rem;">
-            24/40 tasks • Last activity: 2024-04-06 11:30 AM
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col2:
-    st.markdown("""
-    <div class="agent-status">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <h4 style="margin: 0;">Engagement Agent</h4>
-                <p style="color: #6b7280; margin: 0.5rem 0;">Likes and comments on posts</p>
-            </div>
-            <div class="status-badge status-success">Inactive</div>
-        </div>
-        <div class="progress-bar">
-            <div class="progress-value" style="width: 40%;"></div>
-        </div>
-        <div style="color: #6b7280; font-size: 0.875rem; margin-top: 0.5rem;">
-            4/10 tasks • Last activity: 2024-04-06 09:45 AM
-        </div>
-    </div>
-
-    <div class="agent-status">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <h4 style="margin: 0;">Hashtag Monitor</h4>
-                <p style="color: #6b7280; margin: 0.5rem 0;">Tracks and engages with hashtag content</p>
-            </div>
-            <div class="status-badge status-success">Inactive</div>
-        </div>
-        <div class="progress-bar">
-            <div class="progress-value" style="width: 80%;"></div>
-        </div>
-        <div style="color: #6b7280; font-size: 0.875rem; margin-top: 0.5rem;">
-            8/10 tasks • Last activity: 2024-04-06 10:00 AM
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# Recent Activity
-st.subheader("Recent Activity")
-st.markdown("""
-<div style="background: white; padding: 1rem; border-radius: 12px; border: 1px solid #e5e7eb;">
-    <div style="padding: 1rem; border-bottom: 1px solid #e5e7eb;">
-        <div style="display: flex; align-items: center; gap: 1rem;">
-            <div style="width: 8px; height: 8px; border-radius: 50%; background: #0a66c2;"></div>
-            <div style="flex: 1;">
-                <div>Created a new post about AI in marketing</div>
-                <small style="color: #6b7280;">2024-04-06 10:15 AM</small>
-            </div>
-            <span class="status-badge status-success">success</span>
-        </div>
-    </div>
+if page == "Dashboard":
+    st.markdown("## Übersicht")
     
-    <div style="padding: 1rem; border-bottom: 1px solid #e5e7eb;">
-        <div style="display: flex; align-items: center; gap: 1rem;">
-            <div style="width: 8px; height: 8px; border-radius: 50%; background: #059669;"></div>
-            <div style="flex: 1;">
-                <div>Connected with 15 marketing professionals</div>
-                <small style="color: #6b7280;">2024-04-06 09:30 AM</small>
-            </div>
-            <span class="status-badge status-success">success</span>
-        </div>
-    </div>
+    # Metriken
+    col1, col2, col3, col4 = st.columns(4)
     
-    <div style="padding: 1rem; border-bottom: 1px solid #e5e7eb;">
-        <div style="display: flex; align-items: center; gap: 1rem;">
-            <div style="width: 8px; height: 8px; border-radius: 50%; background: #7c3aed;"></div>
-            <div style="flex: 1;">
-                <div>Commented on 3 posts about data science</div>
-                <small style="color: #6b7280;">2024-04-06 08:45 AM</small>
-            </div>
-            <span class="status-badge status-success">success</span>
+    with col1:
+        st.markdown("""
+        <div class="metric-card">
+            <h3>12</h3>
+            <p>Posts erstellt</p>
+            <span class="trend positive">+3 diese Woche</span>
         </div>
-    </div>
+        """, unsafe_allow_html=True)
     
-    <div style="padding: 1rem;">
-        <div style="display: flex; align-items: center; gap: 1rem;">
-            <div style="width: 8px; height: 8px; border-radius: 50%; background: #eab308;"></div>
-            <div style="flex: 1;">
-                <div>Monitoring #artificialintelligence trends</div>
-                <small style="color: #6b7280;">2024-04-06 08:00 AM</small>
+    with col2:
+        st.markdown("""
+        <div class="metric-card">
+            <h3>24</h3>
+            <p>Neue Verbindungen</p>
+            <span class="trend positive">+8 diese Woche</span>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div class="metric-card">
+            <h3>156</h3>
+            <p>Engagement Aktionen</p>
+            <span class="trend positive">+42 diese Woche</span>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown("""
+        <div class="metric-card">
+            <h3>8</h3>
+            <p>Hashtag Interaktionen</p>
+            <span class="trend positive">+2 diese Woche</span>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Aktivitäts-Graph
+    st.markdown("## Aktivitätsverlauf")
+    st.markdown("""
+    <div class="activity-graph">
+        <img src="https://via.placeholder.com/800x400?text=Aktivitätsgraph" alt="Aktivitätsgraph" style="width: 100%; border-radius: 10px;">
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Letzte Aktivitäten
+    st.markdown("## Letzte Aktivitäten")
+    st.markdown("""
+    <div class="activity-feed">
+        <div class="activity-item">
+            <div class="activity-icon">📝</div>
+            <div class="activity-content">
+                <h4>Neuer Post erstellt</h4>
+                <p>KI-gestützte Automatisierung für LinkedIn</p>
+                <span class="activity-time">Vor 2 Stunden</span>
             </div>
-            <span class="status-badge status-pending">pending</span>
+            <span class="status-badge status-success">Erfolgreich</span>
+        </div>
+        
+        <div class="activity-item">
+            <div class="activity-icon">🤝</div>
+            <div class="activity-content">
+                <h4>Neue Verbindung</h4>
+                <p>Max Mustermann - Tech Lead bei Beispiel GmbH</p>
+                <span class="activity-time">Vor 3 Stunden</span>
+            </div>
+            <span class="status-badge status-success">Erfolgreich</span>
+        </div>
+        
+        <div class="activity-item">
+            <div class="activity-icon">💬</div>
+            <div class="activity-content">
+                <h4>Kommentar gepostet</h4>
+                <p>Beitrag von Sarah Schmidt</p>
+                <span class="activity-time">Vor 5 Stunden</span>
+            </div>
+            <span class="status-badge status-success">Erfolgreich</span>
+        </div>
+        
+        <div class="activity-item">
+            <div class="activity-icon">🔍</div>
+            <div class="activity-content">
+                <h4>Hashtag Analyse</h4>
+                <p>#DigitalTransformation #Innovation</p>
+                <span class="activity-time">Vor 6 Stunden</span>
+            </div>
+            <span class="status-badge status-pending">In Bearbeitung</span>
         </div>
     </div>
-</div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
+
+elif page == "Post Erstellung":
+    st.markdown("## Post Erstellung")
+    
+    # Post-Typ Auswahl
+    post_type = st.selectbox(
+        "Wähle den Post-Typ",
+        ["Standard Post", "Karriere Update", "Artikel", "Umfrage", "Event"]
+    )
+    
+    # Post-Inhalt
+    with st.form("post_form"):
+        topic = st.text_input("Thema")
+        tone = st.selectbox("Ton", ["Professional", "Casual", "Informativ", "Inspirierend"])
+        length = st.selectbox("Länge", ["Kurz", "Mittel", "Lang"])
+        
+        # KI-Optimierung
+        st.markdown("### KI-Optimierung")
+        optimize_engagement = st.checkbox("Engagement optimieren")
+        add_hashtags = st.checkbox("Relevante Hashtags hinzufügen")
+        optimize_timing = st.checkbox("Beste Veröffentlichungszeit berechnen")
+        
+        if st.form_submit_button("Post generieren"):
+            try:
+                with st.spinner("Generiere Post..."):
+                    post = asyncio.run(post_draft_agent.generate_post_content(
+                        topic=topic,
+                        tone=tone,
+                        length=length,
+                        optimize_engagement=optimize_engagement,
+                        add_hashtags=add_hashtags,
+                        optimize_timing=optimize_timing
+                    ))
+                    st.success("Post erfolgreich generiert!")
+                    
+                    # Post-Vorschau
+                    st.markdown("### Post-Vorschau")
+                    st.markdown(f"""
+                    <div class="post-preview">
+                        <h3>{post['title']}</h3>
+                        <p>{post['content']}</p>
+                        <div class="hashtags">
+                            {', '.join(post['hashtags'])}
+                        </div>
+                        <div class="post-meta">
+                            <span>Optimale Veröffentlichungszeit: {post['optimal_time']}</span>
+                            <span>Geschätztes Engagement: {post['estimated_engagement']}%</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Post-Veröffentlichung
+                    if st.button("Post veröffentlichen"):
+                        asyncio.run(post_draft_agent.publish_post(post))
+                        st.success("Post erfolgreich veröffentlicht!")
+            except LinkedInError as e:
+                st.error(f"Fehler beim Generieren des Posts: {str(e)}")
+
+elif page == "Networking":
+    st.markdown("## Networking")
+    
+    # Verbindungsstrategie
+    strategy = st.selectbox(
+        "Wähle eine Strategie",
+        ["Zielgruppen-basiert", "Branchen-spezifisch", "Geografisch", "Skills-basiert"]
+    )
+    
+    # Verbindungsparameter
+    with st.form("connection_form"):
+        st.markdown("### Verbindungsparameter")
+        industry = st.multiselect(
+            "Branchen",
+            ["IT", "Finanzen", "Marketing", "HR", "Vertrieb", "Engineering"]
+        )
+        location = st.text_input("Standort")
+        skills = st.multiselect(
+            "Skills",
+            ["Python", "Machine Learning", "Data Science", "Leadership", "Project Management"]
+        )
+        
+        # Personalisierung
+        st.markdown("### Personalisierung")
+        custom_message = st.text_area("Personalisiertes Anschreiben")
+        use_ai_message = st.checkbox("KI-generiertes Anschreiben verwenden")
+        
+        if st.form_submit_button("Verbindungen suchen"):
+            try:
+                with st.spinner("Suche passende Profile..."):
+                    profiles = asyncio.run(connection_agent.find_profiles(
+                        industry=industry,
+                        location=location,
+                        skills=skills
+                    ))
+                    
+                    st.success(f"{len(profiles)} passende Profile gefunden!")
+                    
+                    # Profile anzeigen
+                    for profile in profiles:
+                        st.markdown(f"""
+                        <div class="profile-card">
+                            <h3>{profile['name']}</h3>
+                            <p>{profile['title']}</p>
+                            <p>{profile['company']}</p>
+                            <button class="connect-button">Verbinden</button>
+                        </div>
+                        """, unsafe_allow_html=True)
+            except LinkedInError as e:
+                st.error(f"Fehler bei der Profilsuche: {str(e)}")
+
+elif page == "Interaktionen":
+    st.markdown("## Interaktionen")
+    
+    # Interaktionsstrategie
+    strategy = st.selectbox(
+        "Wähle eine Strategie",
+        ["Hashtag-basiert", "Inhalts-basiert", "Profil-basiert", "Zeit-basiert"]
+    )
+    
+    # Interaktionsparameter
+    with st.form("interaction_form"):
+        st.markdown("### Interaktionsparameter")
+        hashtags = st.multiselect(
+            "Hashtags",
+            ["#AI", "#Innovation", "#Tech", "#Leadership", "#DigitalTransformation"]
+        )
+        content_types = st.multiselect(
+            "Inhaltstypen",
+            ["Artikel", "Posts", "Kommentare", "Umfragen"]
+        )
+        max_interactions = st.slider("Max. Interaktionen pro Tag", 0, 50, 20)
+        interaction_types = st.multiselect(
+            "Interaktionstypen",
+            ["Likes", "Kommentare", "Teilen", "Speichern"]
+        )
+        
+        # Zeitplanung
+        st.markdown("### Zeitplanung")
+        schedule_start = st.time_input("Startzeit")
+        schedule_end = st.time_input("Endzeit")
+        timezone = st.selectbox("Zeitzone", ["UTC", "CET", "EST"])
+        
+        if st.form_submit_button("Interaktionen starten"):
+            try:
+                with st.spinner("Starte Interaktionen..."):
+                    success = asyncio.run(interaction_agent.start_interactions(
+                        hashtags=hashtags,
+                        content_types=content_types,
+                        max_interactions=max_interactions,
+                        interaction_types=interaction_types,
+                        schedule_start=schedule_start,
+                        schedule_end=schedule_end,
+                        timezone=timezone
+                    ))
+                    if success:
+                        st.success("Interaktionen erfolgreich gestartet!")
+                    else:
+                        st.error("Fehler beim Starten der Interaktionen")
+            except LinkedInError as e:
+                st.error(f"Fehler bei den Interaktionen: {str(e)}")
+
+elif page == "Einstellungen":
+    st.markdown("## Einstellungen")
+    
+    # LinkedIn Einstellungen
+    st.markdown("### LinkedIn Einstellungen")
+    with st.form("linkedin_settings"):
+        linkedin_email = st.text_input("LinkedIn Email")
+        linkedin_password = st.text_input("LinkedIn Passwort", type="password")
+        api_key = st.text_input("LinkedIn API Key")
+        
+        if st.form_submit_button("LinkedIn Einstellungen speichern"):
+            # Einstellungen speichern
+            st.success("LinkedIn Einstellungen gespeichert!")
+    
+    # KI Einstellungen
+    st.markdown("### KI Einstellungen")
+    with st.form("ai_settings"):
+        openai_api_key = st.text_input("OpenAI API Key", type="password")
+        model = st.selectbox(
+            "KI-Modell",
+            ["gpt-4", "gpt-3.5-turbo", "claude-2"]
+        )
+        temperature = st.slider("Kreativität", 0.0, 1.0, 0.7)
+        
+        if st.form_submit_button("KI Einstellungen speichern"):
+            # Einstellungen speichern
+            st.success("KI Einstellungen gespeichert!")
+    
+    # Automatisierungseinstellungen
+    st.markdown("### Automatisierungseinstellungen")
+    with st.form("automation_settings"):
+        daily_limit = st.number_input("Tägliches Limit", 0, 1000, 100)
+        cooldown = st.number_input("Abkühlzeit (Minuten)", 0, 60, 15)
+        safety_mode = st.checkbox("Sicherheitsmodus aktivieren")
+        
+        if st.form_submit_button("Automatisierungseinstellungen speichern"):
+            # Einstellungen speichern
+            st.success("Automatisierungseinstellungen gespeichert!")

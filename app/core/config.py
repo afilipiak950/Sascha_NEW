@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     REACT_APP_OPENAI_API_URL: str = "https://api.openai.com/v1"
     
     # CORS
-    BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:8501"]  # Streamlit Frontend
+    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
 
     @validator("BACKEND_CORS_ORIGINS", pre=True)
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "postgres")
     POSTGRES_DB: str = os.getenv("POSTGRES_DB", "linkedin_agent")
-    DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL")
+    DATABASE_URL: Optional[str] = None
 
     @validator("DATABASE_URL", pre=True)
     def assemble_db_connection(cls, v: Optional[str], values: dict) -> str:
@@ -47,12 +47,19 @@ class Settings(BaseSettings):
         """Alias für DATABASE_URL für SQLAlchemy Kompatibilität"""
         return self.DATABASE_URL or "sqlite:///linkedin_agent.db"
 
+    # LinkedIn OAuth2
+    LINKEDIN_CLIENT_ID: str = os.getenv("LINKEDIN_CLIENT_ID", "")
+    LINKEDIN_CLIENT_SECRET: str = os.getenv("LINKEDIN_CLIENT_SECRET", "")
+    LINKEDIN_REDIRECT_URI: str = os.getenv("LINKEDIN_REDIRECT_URI", "http://localhost:8501/callback")
+    
     # LinkedIn API
+    LINKEDIN_API_URL: str = "https://api.linkedin.com/v2"
     LINKEDIN_EMAIL: str = os.getenv("LINKEDIN_EMAIL", "")
     LINKEDIN_PASSWORD: str = os.getenv("LINKEDIN_PASSWORD", "")
     
     # OpenAI API
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_API_URL: str = "https://api.openai.com/v1"
     
     # Scheduler
     POST_CREATION_DAYS: List[str] = ["mon", "wed", "fri"]
@@ -73,17 +80,6 @@ class Settings(BaseSettings):
     # Browser
     BROWSER_HEADLESS: bool = True
     BROWSER_USER_AGENT: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    
-    # LinkedIn
-    LINKEDIN_API_URL: str = "https://api.linkedin.com/v2"
-    LINKEDIN_CLIENT_ID: Optional[str] = None
-    LINKEDIN_CLIENT_SECRET: Optional[str] = None
-    
-    # OpenAI API
-    OPENAI_API_URL: str = "https://api.openai.com/v1"
-    
-    # Scheduler
-    SCHEDULER_INTERVAL: int = 60  # Sekunden
     
     # Agent-Einstellungen
     POSTS_PER_WEEK: int = 3
