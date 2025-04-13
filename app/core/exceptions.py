@@ -12,4 +12,8 @@ class LinkedInConnectionError(LinkedInError):
 
 class LinkedInAPIError(LinkedInError):
     """Fehler bei LinkedIn API-Aufrufen"""
+    pass
+
+class LinkedInRateLimitError(LinkedInError):
+    """Fehler bei Überschreitung des LinkedIn API-Limits"""
     pass 

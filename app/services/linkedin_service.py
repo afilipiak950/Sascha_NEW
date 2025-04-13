@@ -11,7 +11,8 @@ from app.core.config import settings
 from app.models.post import Post, PostStatus
 from app.models.interaction import Interaction, InteractionType
 from app.models.target_contact import TargetContact, ContactStatus
-from app.core.exceptions import LinkedInAuthError, LinkedInConnectionError, LinkedInAPIError
+from app.core.exceptions import LinkedInAuthError, LinkedInConnectionError, LinkedInAPIError, LinkedInRateLimitError
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -349,4 +350,88 @@ class LinkedInService:
                 logger.info("Browser erfolgreich geschlossen")
         except Exception as e:
             logger.error(f"Fehler beim Schließen des Browsers: {str(e)}")
-            raise LinkedInConnectionError("Browser konnte nicht geschlossen werden") from e 
+            raise LinkedInConnectionError("Browser konnte nicht geschlossen werden") from e
+
+    async def publish_post(self, content: str, title: str = "", hashtags: List[str] = None, image_path: Optional[str] = None) -> bool:
+        """Veröffentlicht einen Post direkt auf LinkedIn."""
+        if not self.is_logged_in:
+            logger.error("Nicht bei LinkedIn angemeldet")
+            return False
+        
+        try:
+            # Zur Post-Erstellungsseite navigieren
+            await self.page.goto("https://www.linkedin.com/feed/")
+            await self.page.click('button[aria-label="Post erstellen"]')
+            
+            # Warten auf den Editor
+            editor = await self.page.wait_for_selector('div[aria-label="Editor für Textbeiträge"]')
+            
+            # Post-Inhalt zusammenstellen
+            full_content = f"{title}\n\n{content}"
+            if hashtags:
+                hashtag_text = " ".join([f"#{tag.strip('#')}" for tag in hashtags])
+                full_content += f"\n\n{hashtag_text}"
+            
+            # Text eingeben
+            await editor.fill(full_content)
+            
+            # Bild hinzufügen, falls vorhanden
+            if image_path:
+                await self.page.click('button[aria-label="Medien hinzufügen"]')
+                file_input = await self.page.wait_for_selector('input[type="file"]')
+                await file_input.set_input_files(image_path)
+                await self.page.wait_for_selector('.share-box-footer__main-actions')
+            
+            # Post veröffentlichen
+            await self.page.click('button:has-text("Posten")')
+            
+            # Warten auf Bestätigung
+            try:
+                await self.page.wait_for_selector('.artdeco-toast-item__message', timeout=10000)
+                logger.info("Post erfolgreich veröffentlicht")
+                return True
+            except TimeoutError:
+                logger.error("Timeout beim Warten auf Veröffentlichungsbestätigung")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Fehler beim Veröffentlichen des Posts: {str(e)}")
+            return False
+
+    async def login(self):
+        """Meldet sich bei LinkedIn an."""
+        try:
+            # Hole Credentials aus Umgebungsvariablen
+            email = os.getenv('LINKEDIN_EMAIL')
+            password = os.getenv('LINKEDIN_PASSWORD')
+            client_id = os.getenv('LINKEDIN_CLIENT_ID')
+            client_secret = os.getenv('LINKEDIN_CLIENT_SECRET')
+
+            if not all([email, password, client_id, client_secret]):
+                raise LinkedInAuthError("LinkedIn-Credentials fehlen in der .env-Datei")
+
+            # Navigiere zur Login-Seite
+            await self.page.goto("https://www.linkedin.com/login")
+            
+            # Warte auf Login-Formular
+            await self.page.wait_for_selector("#username")
+            
+            # Fülle Anmeldedaten ein
+            await self.page.fill("#username", email)
+            await self.page.fill("#password", password)
+            
+            # Klicke auf Anmelden
+            await self.page.click("button[type='submit']")
+            
+            # Warte auf erfolgreiche Anmeldung
+            try:
+                await self.page.wait_for_selector(".feed-identity-module", timeout=10000)
+                self.is_logged_in = True
+                logger.info("Erfolgreich bei LinkedIn angemeldet")
+            except TimeoutError:
+                raise LinkedInAuthError("Login-Timeout: Konnte Feed nicht laden")
+                
+        except Exception as e:
+            logger.error(f"Fehler beim LinkedIn-Login: {str(e)}")
+            self.is_logged_in = False
+            raise LinkedInAuthError(f"Login fehlgeschlagen: {str(e)}") 

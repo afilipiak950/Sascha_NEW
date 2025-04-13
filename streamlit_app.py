@@ -11,6 +11,8 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime, timedelta
 from app.core.exceptions import LinkedInError, LinkedInAuthError, LinkedInConnectionError, LinkedInRateLimitError
+from dotenv import load_dotenv
+import os
 
 # Konfiguration
 st.set_page_config(
@@ -222,9 +224,170 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Services initialisieren
+def show_post_creation():
+    st.markdown("## 📝 Post erstellen")
+    
+    # Eingabefelder für den Post
+    topic = st.text_input("Thema des Posts", placeholder="z.B. KI in der Softwareentwicklung")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        tone = st.selectbox("Tonalität", ["professionell", "casual", "inspirierend", "technisch"])
+        optimize_engagement = st.checkbox("Engagement optimieren", value=True)
+    with col2:
+        length = st.selectbox("Länge", ["kurz", "mittel", "lang"])
+        add_hashtags = st.checkbox("Hashtags hinzufügen", value=True)
+    
+    # Bild-Upload
+    uploaded_file = st.file_uploader("Bild für den Post (optional)", type=["jpg", "jpeg", "png"])
+    
+    # Generate-Button und Post-Vorschau
+    if st.button("Post generieren", type="primary"):
+        with st.spinner("Generiere Post..."):
+            try:
+                post_data = asyncio.run(ai_service.generate_post_content(
+                    topic=topic,
+                    tone=tone,
+                    length=length,
+                    optimize_engagement=optimize_engagement,
+                    add_hashtags=add_hashtags
+                ))
+                
+                if isinstance(post_data, dict) and all(key in post_data for key in ["title", "content", "hashtags", "optimal_time", "estimated_engagement"]):
+                    # Post-Vorschau in einer Card
+                    st.markdown("""
+                    <div style='background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>
+                        <h3 style='color: #0A66C2; margin-bottom: 15px;'>{title}</h3>
+                        <p style='white-space: pre-line; margin-bottom: 20px;'>{content}</p>
+                        {hashtags}
+                        <div style='color: #666; font-size: 0.9em; margin-top: 15px;'>
+                            Optimale Veröffentlichungszeit: {optimal_time} Uhr<br>
+                            Geschätztes Engagement: {engagement}%
+                        </div>
+                    </div>
+                    """.format(
+                        title=post_data["title"],
+                        content=post_data["content"],
+                        hashtags=f"<div style='color: #0A66C2; margin-top: 10px;'>{' '.join(post_data['hashtags'])}</div>" if post_data["hashtags"] else "",
+                        optimal_time=post_data["optimal_time"],
+                        engagement=post_data["estimated_engagement"]
+                    ), unsafe_allow_html=True)
+                    
+                    # Bild-Vorschau
+                    if uploaded_file:
+                        st.image(uploaded_file, caption="Hochgeladenes Bild", use_column_width=True)
+                    
+                    # Veröffentlichungs-Bereich
+                    st.markdown("---")
+                    st.markdown("### Veröffentlichung")
+                    
+                    # Zeitplanung und Veröffentlichung in Tabs
+                    publish_tab, schedule_tab = st.tabs(["Jetzt veröffentlichen", "Zeitlich planen"])
+                    
+                    with publish_tab:
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            confirm_publish = st.checkbox("Ich habe den Post überprüft und möchte ihn jetzt veröffentlichen")
+                        with col2:
+                            if confirm_publish:
+                                if st.button("Jetzt veröffentlichen", type="primary", use_container_width=True):
+                                    try:
+                                        if not linkedin_service.is_logged_in:
+                                            st.error("Nicht bei LinkedIn angemeldet. Bitte melden Sie sich zuerst an.")
+                                            return
+                                            
+                                        with st.spinner("Veröffentliche Post auf LinkedIn..."):
+                                            # Post veröffentlichen
+                                            success = asyncio.run(linkedin_service.publish_post(
+                                                content=post_data["content"],
+                                                title=post_data["title"],
+                                                hashtags=post_data["hashtags"],
+                                                image_path=uploaded_file.name if uploaded_file else None
+                                            ))
+                                            
+                                            if success:
+                                                st.success("🎉 Post wurde erfolgreich auf LinkedIn veröffentlicht!")
+                                                # Aktivität speichern
+                                                post_draft_agent.log_activity("Post veröffentlicht", post_data["title"])
+                                            else:
+                                                st.error("Post konnte nicht veröffentlicht werden. Bitte überprüfen Sie Ihre LinkedIn-Verbindung.")
+                                    except Exception as e:
+                                        st.error(f"Fehler bei der Veröffentlichung: {str(e)}")
+                    
+                    with schedule_tab:
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            post_date = st.date_input("Datum")
+                        with col2:
+                            post_time = st.time_input("Uhrzeit", value=datetime.strptime(post_data["optimal_time"], "%H:%M").time())
+                        
+                        confirm_schedule = st.checkbox("Ich habe den Post überprüft und möchte ihn zum gewählten Zeitpunkt veröffentlichen")
+                        if confirm_schedule:
+                            if st.button("Planung bestätigen", type="primary", use_container_width=True):
+                                scheduled_time = datetime.combine(post_date, post_time)
+                                try:
+                                    # Post planen
+                                    success = asyncio.run(linkedin_service.schedule_post(
+                                        content=post_data["content"],
+                                        title=post_data["title"],
+                                        hashtags=post_data["hashtags"],
+                                        scheduled_time=scheduled_time,
+                                        image_path=uploaded_file.name if uploaded_file else None
+                                    ))
+                                    
+                                    if success:
+                                        st.success(f"🎉 Post wurde erfolgreich für {scheduled_time.strftime('%d.%m.%Y um %H:%M')} Uhr geplant!")
+                                        # Aktivität speichern
+                                        post_draft_agent.log_activity("Post geplant", post_data["title"], scheduled_time)
+                                    else:
+                                        st.error("Post konnte nicht geplant werden. Bitte überprüfen Sie Ihre LinkedIn-Verbindung.")
+                                except LinkedInError as e:
+                                    st.error(f"LinkedIn-Fehler: {str(e)}")
+                                except Exception as e:
+                                    st.error(f"Fehler bei der Planung: {str(e)}")
+                
+                else:
+                    st.error("Fehlerhafte Antwort vom AI-Service. Bitte versuchen Sie es erneut.")
+                
+            except Exception as e:
+                st.error(f"Fehler bei der Post-Generierung: {str(e)}")
+                st.error("Bitte versuchen Sie es erneut oder kontaktieren Sie den Support.")
+
+# Lade Umgebungsvariablen
+load_dotenv()
+
+# LinkedIn-Service initialisieren
 linkedin_service = LinkedInService()
+
+async def initialize_linkedin():
+    """Initialisiert die LinkedIn-Verbindung mit Credentials aus .env"""
+    try:
+        # Überprüfe ob die notwendigen Umgebungsvariablen existieren
+        required_vars = ['LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET', 'LINKEDIN_EMAIL', 'LINKEDIN_PASSWORD']
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+        
+        if missing_vars:
+            st.error(f"Fehlende LinkedIn-Credentials in .env: {', '.join(missing_vars)}")
+            return False
+            
+        if not st.session_state.get('linkedin_initialized', False):
+            with st.spinner("Verbinde mit LinkedIn..."):
+                await linkedin_service.initialize()
+                st.session_state.linkedin_initialized = True
+                st.success("🔗 Erfolgreich mit LinkedIn verbunden!")
+        return True
+    except Exception as e:
+        st.error(f"Fehler bei der LinkedIn-Verbindung: {str(e)}")
+        return False
+
+# Automatische LinkedIn-Initialisierung beim Start
+if 'linkedin_initialized' not in st.session_state:
+    st.session_state.linkedin_initialized = asyncio.run(initialize_linkedin())
+
+# Initialisiere Services
 ai_service = AIService()
+
+# Initialisiere Agenten
 interaction_agent = InteractionAgent(linkedin_service, ai_service)
 post_draft_agent = PostDraftAgent(linkedin_service, ai_service)
 connection_agent = ConnectionAgent(linkedin_service, ai_service)
@@ -404,61 +567,7 @@ if page == "Dashboard":
     """, unsafe_allow_html=True)
 
 elif page == "Post Erstellung":
-    st.markdown("## Post Erstellung")
-    
-    # Post-Typ Auswahl
-    post_type = st.selectbox(
-        "Wähle den Post-Typ",
-        ["Standard Post", "Karriere Update", "Artikel", "Umfrage", "Event"]
-    )
-    
-    # Post-Inhalt
-    with st.form("post_form"):
-        topic = st.text_input("Thema")
-        tone = st.selectbox("Ton", ["Professional", "Casual", "Informativ", "Inspirierend"])
-        length = st.selectbox("Länge", ["Kurz", "Mittel", "Lang"])
-        
-        # KI-Optimierung
-        st.markdown("### KI-Optimierung")
-        optimize_engagement = st.checkbox("Engagement optimieren")
-        add_hashtags = st.checkbox("Relevante Hashtags hinzufügen")
-        optimize_timing = st.checkbox("Beste Veröffentlichungszeit berechnen")
-        
-        if st.form_submit_button("Post generieren"):
-            try:
-                with st.spinner("Generiere Post..."):
-                    post = asyncio.run(post_draft_agent.generate_post_content(
-                        topic=topic,
-                        tone=tone,
-                        length=length,
-                        optimize_engagement=optimize_engagement,
-                        add_hashtags=add_hashtags,
-                        optimize_timing=optimize_timing
-                    ))
-                    st.success("Post erfolgreich generiert!")
-                    
-                    # Post-Vorschau
-                    st.markdown("### Post-Vorschau")
-                    st.markdown(f"""
-                    <div class="post-preview">
-                        <h3>{post['title']}</h3>
-                        <p>{post['content']}</p>
-                        <div class="hashtags">
-                            {', '.join(post['hashtags'])}
-                        </div>
-                        <div class="post-meta">
-                            <span>Optimale Veröffentlichungszeit: {post['optimal_time']}</span>
-                            <span>Geschätztes Engagement: {post['estimated_engagement']}%</span>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Post-Veröffentlichung
-                    if st.button("Post veröffentlichen"):
-                        asyncio.run(post_draft_agent.publish_post(post))
-                        st.success("Post erfolgreich veröffentlicht!")
-            except LinkedInError as e:
-                st.error(f"Fehler beim Generieren des Posts: {str(e)}")
+    show_post_creation()
 
 elif page == "Networking":
     st.markdown("## Networking")
@@ -563,40 +672,41 @@ elif page == "Interaktionen":
                 st.error(f"Fehler bei den Interaktionen: {str(e)}")
 
 elif page == "Einstellungen":
-    st.markdown("## Einstellungen")
+    st.header("🛠️ Einstellungen")
     
-    # LinkedIn Einstellungen
-    st.markdown("### LinkedIn Einstellungen")
-    with st.form("linkedin_settings"):
-        linkedin_email = st.text_input("LinkedIn Email")
-        linkedin_password = st.text_input("LinkedIn Passwort", type="password")
-        api_key = st.text_input("LinkedIn API Key")
-        
-        if st.form_submit_button("LinkedIn Einstellungen speichern"):
-            # Einstellungen speichern
-            st.success("LinkedIn Einstellungen gespeichert!")
-    
-    # KI Einstellungen
-    st.markdown("### KI Einstellungen")
-    with st.form("ai_settings"):
-        openai_api_key = st.text_input("OpenAI API Key", type="password")
-        model = st.selectbox(
-            "KI-Modell",
-            ["gpt-4", "gpt-3.5-turbo", "claude-2"]
-        )
-        temperature = st.slider("Kreativität", 0.0, 1.0, 0.7)
-        
-        if st.form_submit_button("KI Einstellungen speichern"):
-            # Einstellungen speichern
-            st.success("KI Einstellungen gespeichert!")
-    
+    # LinkedIn-Verbindungsstatus anzeigen
+    st.subheader("LinkedIn-Verbindung")
+    if st.session_state.get('linkedin_initialized', False):
+        st.success("✅ Mit LinkedIn verbunden")
+        if st.button("LinkedIn-Verbindung erneuern"):
+            st.session_state.linkedin_initialized = asyncio.run(initialize_linkedin())
+    else:
+        st.error("❌ Nicht mit LinkedIn verbunden")
+        if st.button("Mit LinkedIn verbinden"):
+            st.session_state.linkedin_initialized = asyncio.run(initialize_linkedin())
+
     # Automatisierungseinstellungen
-    st.markdown("### Automatisierungseinstellungen")
-    with st.form("automation_settings"):
-        daily_limit = st.number_input("Tägliches Limit", 0, 1000, 100)
-        cooldown = st.number_input("Abkühlzeit (Minuten)", 0, 60, 15)
-        safety_mode = st.checkbox("Sicherheitsmodus aktivieren")
-        
-        if st.form_submit_button("Automatisierungseinstellungen speichern"):
-            # Einstellungen speichern
-            st.success("Automatisierungseinstellungen gespeichert!")
+    st.subheader("Automatisierungseinstellungen")
+    auto_settings = {
+        "post_frequency": st.selectbox(
+            "Post-Häufigkeit",
+            ["Täglich", "Wöchentlich", "Monatlich"],
+            index=1
+        ),
+        "max_posts_per_day": st.number_input(
+            "Maximale Posts pro Tag",
+            min_value=1,
+            max_value=5,
+            value=2
+        ),
+        "working_hours": st.slider(
+            "Arbeitszeiten (Stunden)",
+            min_value=0,
+            max_value=23,
+            value=(9, 17)
+        )
+    }
+
+# Überprüfen Sie den Login-Status
+if not linkedin_service.is_logged_in:
+    st.error("Nicht bei LinkedIn angemeldet. Bitte überprüfen Sie Ihre Anmeldedaten.")

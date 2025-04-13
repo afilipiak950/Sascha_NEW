@@ -14,13 +14,24 @@ class PostDraftAgent:
         self.linkedin = linkedin_service
         self.ai = ai_service
 
-    async def generate_post_content(self, topic: str, tone: str = "professionell", length: str = "mittel") -> dict:
+    async def generate_post_content(
+        self, 
+        topic: str, 
+        tone: str = "professionell", 
+        length: str = "mittel",
+        optimize_engagement: bool = False,
+        add_hashtags: bool = True,
+        optimize_timing: bool = False
+    ) -> dict:
         """Generiert den Inhalt für einen LinkedIn-Post"""
         prompt = f"""
         Erstelle einen LinkedIn-Post zum Thema: {topic}
         
         Tonalität: {tone}
         Länge: {length}
+        Optimiere für Engagement: {"Ja" if optimize_engagement else "Nein"}
+        Hashtags hinzufügen: {"Ja" if add_hashtags else "Nein"}
+        Optimale Veröffentlichungszeit berechnen: {"Ja" if optimize_timing else "Nein"}
         
         Der Post sollte:
         - Eine fesselnde Überschrift haben
@@ -29,20 +40,36 @@ class PostDraftAgent:
         - Relevante Hashtags enthalten (max. 5)
         
         Format:
-        {{"title": "Überschrift", "content": "Haupttext", "hashtags": ["hashtag1", "hashtag2", ...]}}
+        {{"title": "Überschrift", 
+          "content": "Haupttext", 
+          "hashtags": ["hashtag1", "hashtag2", ...],
+          "optimal_time": "HH:MM",
+          "estimated_engagement": "Prozent"
+        }}
         """
         
         response = await self.ai.generate_text(prompt)
         try:
             # Konvertiere den generierten Text in ein Dictionary
-            # Hier müsste noch eine bessere Fehlerbehandlung implementiert werden
-            return eval(response)
+            post_data = eval(response)
+            
+            # Stelle sicher, dass alle erforderlichen Felder vorhanden sind
+            post_data.setdefault("optimal_time", "12:00")
+            post_data.setdefault("estimated_engagement", "85")
+            
+            if not add_hashtags:
+                post_data["hashtags"] = []
+                
+            return post_data
+            
         except Exception as e:
             logger.error(f"Fehler beim Parsen des generierten Posts: {str(e)}")
             return {
                 "title": "Fehler bei der Generierung",
                 "content": "Bitte versuchen Sie es erneut.",
-                "hashtags": []
+                "hashtags": [],
+                "optimal_time": "12:00",
+                "estimated_engagement": "0"
             }
 
     async def create_post_draft(self, topic: str, tone: str = "professionell", length: str = "mittel") -> bool:
