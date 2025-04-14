@@ -7,6 +7,8 @@ from app.agents.interaction_agent import InteractionAgent
 from app.agents.post_draft_agent import PostDraftAgent
 from app.agents.connection_agent import ConnectionAgent
 from app.agents.hashtag_agent import HashtagAgent
+from app.agents.linkedin_agent import LinkedInAgent
+from app.agents.engagement_agent import EngagementAgent
 import plotly.express as px
 import pandas as pd
 from datetime import datetime, timedelta
@@ -392,6 +394,8 @@ interaction_agent = InteractionAgent(linkedin_service, ai_service)
 post_draft_agent = PostDraftAgent(linkedin_service, ai_service)
 connection_agent = ConnectionAgent(linkedin_service, ai_service)
 hashtag_agent = HashtagAgent(linkedin_service, ai_service)
+linkedin_agent = LinkedInAgent(linkedin_service, ai_service)
+engagement_agent = EngagementAgent(linkedin_service, ai_service)
 
 # Header
 st.markdown("""
@@ -460,7 +464,7 @@ with st.sidebar:
     st.markdown("### Menü")
     page = st.selectbox(
         "Wähle eine Funktion",
-        ["Dashboard", "Post Erstellung", "Networking", "Interaktionen", "Einstellungen"],
+        ["Dashboard", "Post Erstellung", "Networking", "Interaktionen", "Einstellungen", "Automatisierung"],
         key="nav_select"
     )
     
@@ -706,6 +710,57 @@ elif page == "Einstellungen":
             value=(9, 17)
         )
     }
+
+elif page == "Automatisierung":
+    st.header("🤖 Automatisierung")
+    
+    # Agent-Auswahl
+    agent_type = st.selectbox(
+        "Agent auswählen",
+        ["LinkedIn-Agent", "Engagement-Agent"]
+    )
+    
+    if agent_type == "LinkedIn-Agent":
+        st.subheader("LinkedIn-Agent Konfiguration")
+        
+        task_type = st.selectbox(
+            "Aufgabentyp",
+            ["Post erstellen", "Netzwerk-Interaktion", "Engagement analysieren"]
+        )
+        
+        if task_type == "Post erstellen":
+            topic = st.text_input("Thema des Posts")
+            tone = st.selectbox("Tonalität", ["professionell", "casual", "technisch"])
+            length = st.selectbox("Länge", ["kurz", "mittel", "lang"])
+            
+            if st.button("Aufgabe starten"):
+                with st.spinner("LinkedIn-Agent arbeitet..."):
+                    result = asyncio.run(linkedin_agent.run(
+                        f"Erstelle einen {length}en Post im {tone}en Ton über {topic}"
+                    ))
+                    if result["success"]:
+                        st.success("Aufgabe erfolgreich abgeschlossen!")
+                        st.json(result["result"])
+                    else:
+                        st.error(f"Fehler: {result['error']}")
+                        
+    elif agent_type == "Engagement-Agent":
+        st.subheader("Engagement-Agent Konfiguration")
+        
+        keywords = st.text_input("Keywords (mit Komma getrennt)")
+        max_interactions = st.slider("Maximale Interaktionen", 1, 20, 5)
+        
+        if st.button("Engagement starten"):
+            with st.spinner("Engagement-Agent arbeitet..."):
+                result = asyncio.run(engagement_agent.run(
+                    keywords=keywords.split(","),
+                    max_interactions=max_interactions
+                ))
+                if result["success"]:
+                    st.success("Engagement erfolgreich durchgeführt!")
+                    st.json(result["result"])
+                else:
+                    st.error(f"Fehler: {result['error']}")
 
 # Überprüfen Sie den Login-Status
 if not linkedin_service.is_logged_in:
